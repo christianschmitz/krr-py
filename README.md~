@@ -6,7 +6,6 @@ kernel ridge regression utility for simple data files
 > krr.py -n 2 -s 0.001 -a 0.1 example.dat
 > krr.py -r 0:10:11,1 example.dat
 > krr.py -f example.dat -n 1 example.dat
-> krr.py -r 1:4:10,0:0.3:3 example.dat
 
 # dependencies:
 * numpy version 1.8.2
