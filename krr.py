@@ -93,13 +93,32 @@ def getPredVars(numIndep, ranges, rangeFile):
 def calcOptimalScaling(x):
     n = x.shape[1]
     scaling = np.zeros(n)
-    for i in range(0,x.shape[1]):
+    for i in range(0,n):
         scaling[i] = 1.0/np.amax(x[:,i])
     return scaling
 
 
+# input: 1d array
+def calcTypicalJump(x):
+    xs = np.sort(x)
+    d = xs[1:]-xs[:-1]
+
+    jump = np.amax(d)
+    return jump
+
+
+def calcTypicalJumps(x):
+    n = x.shape[1]
+    jumps = np.zeros(n)
+    for i in range(0,n):
+        jumps[i] = calcTypicalJump(x[:,i])
+    return jumps
+
+
 def predict(x, y, xf, sigma, alpha):
-    scaling = calcOptimalScaling(x)
+    #scaling = calcOptimalScaling(x)
+    jumps = calcTypicalJumps(x)
+    scaling = 0.1/jumps
     kernel = mlpy.KernelGaussian(sigma)
     krr = mlpy.KernelRidgeRegression(kernel, alpha)
     krr.learn(x*scaling, y)
