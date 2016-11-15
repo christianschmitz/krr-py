@@ -15,6 +15,7 @@ def getParser():
     parser.add_argument("-f", "--range-file", help="overrides the indep variables in FILE")
     parser.add_argument("-s", "--sigma", help="gaussian kernel deviation, default=1.0, can be comma separated list for multiple observed variables", default="1.0")
     parser.add_argument("-a", "--alpha", help="penalization parameter, default=0.1, can be comma separated list for multiple observed variables", default="0.1")
+    parser.add_argument("-o", "--optimize", help="column index from which the optimum is always selected, can only be used in combination with -r")
     return parser
 
 
@@ -42,9 +43,18 @@ def parseArgs():
     else:
         numIndep = args.num_indep
 
+    optimColumns = [-1,-1]
+    if args.optimize:
+        if not ranges:
+            raise Exception("--optimize must be used in combination with --ranges")
+        else:
+            optimColumns = [int(i) for i in args.optimize.split(",")]
+            if (not len(optimColumns) == 2):
+                raise Exception("--optimize requires argument in form INDEPC,OBSERVC")
+
     sigma = [float(s) for s in args.sigma.split(",")]
     alpha = [float(a) for a in args.alpha.split(",")]
-    return (args.file, numIndep, ranges, rangeFile, sigma, alpha)
+    return (args.file, numIndep, ranges, rangeFile, sigma, alpha, optimColumns)
 
 
 def getPredVarsFromRanges(ranges):
@@ -61,7 +71,7 @@ def getPredVarsFromRanges(ranges):
         else:
             raise Exception("Error in ranges: "+str(r))
 
-    meshGrid = np.meshgrid(*linSpaces)
+    meshGrid = np.meshgrid(tuple(linSpaces))
     # Now concat these horizontally
     numPoints = meshGrid[0].size
     predVars = np.zeros((numPoints, len(meshGrid)))
@@ -103,7 +113,6 @@ def calcTypicalJump(x):
     xs = np.sort(x)
     d = xs[1:]-xs[:-1]
 
-    ds = np.sort(d)
     jump = np.amax(d)
     return jump
 
@@ -154,10 +163,59 @@ def predictObserved(fname, predVars, sigma, alpha):
     return predOut
 
 
+def getSortableFieldArray(x, numIndep, indepColumn):
+    nR = x.shape[0]
+    nC = x.shape[1]
+
+    dtype=[]
+    dtypeSort=[]
+    for i in range(0,nC):
+        name=str(i)
+        dtype.append((name, float))
+
+        if i < numIndep-1 and (not i==indepColumn):
+            dtypeSort.append(name)
+
+    values = []
+    for i in range(0, nR):
+        l = x[i,:].tolist()
+        values.append(tuple(l))
+    a = np.array(values, dtype = dtype)
+    return (a, dtypeSort)
+
+
+def extractStructuredArray(x):
+    l = x.tolist()
+    nR = len(l)
+    nC = len(list(l[0]))
+
+    a = np.zeros((nR, nC))
+
+    for i in range(0,nR):
+        a[i,:] = np.array(list(l[i]))[:]
+
+    return a
+
+
+def optimize(dataOut, numIndep, optimColumns):
+    indepColumn = optimColumns[0] 
+    obserColumn = optimColumns[1]
+
+    (x, dtypeSort) = getSortableFieldArray(dataOut, numIndep, indepColumn)
+    xs_ = np.sort(x, order=dtypeSort)
+    xs = extractStructuredArray(xs_)
+
+    
+
+    # First step is to sort over all the columns except the 
+    return dataOut
+
+
 #TODO: automatic determination of good and robust values for sigma and alpha
 #TODO: normalization of indepVar input data so that single sigma and alpha are optimal over whole input space
+#TODO: choose between maximize and minimize
 def main():
-    (fname, numIndep, ranges, rangeFile, sigma, alpha) = parseArgs()
+    (fname, numIndep, ranges, rangeFile, sigma, alpha, optimColumns) = parseArgs()
 
     predVars = getPredVars(numIndep, ranges, rangeFile)
 
@@ -165,6 +223,9 @@ def main():
 
     # Print the result 
     dataOut = np.c_[predVars, predOut]
+
+    if (optimColumns[0] >= 0):
+        dataOut = optimize(dataOut, numIndep, optimColumns)
     np.savetxt(sys.stdout, dataOut, fmt='%g')
     return
 
