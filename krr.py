@@ -11,11 +11,10 @@ def getParser():
     parser = argparse.ArgumentParser(description="kernel ridge regression of N independent variables vs M observed variables")
     parser.add_argument("file", help="data file with independent variable columns first, then the observed variable columns")
     parser.add_argument("-n", "--num-indep", type=int, default=0, help="number of independent variables")
-    parser.add_argument("-r", "--ranges", help="comma separated list of ranges, eg: a0:a1:Na,b0:b1,c,d,e. Overrides indep variables from FILE or RANGE-FILE")
+    parser.add_argument("-r", "--ranges", help="comma separated list of ranges, eg: a0:a1:Na:max(2),b0:b1,c,d,e. Overrides indep variables from FILE or RANGE-FILE")
     parser.add_argument("-f", "--range-file", help="overrides the indep variables in FILE")
     parser.add_argument("-s", "--sigma", help="gaussian kernel deviation, default=1.0, can be comma separated list for multiple observed variables", default="1.0")
     parser.add_argument("-a", "--alpha", help="penalization parameter, default=0.1, can be comma separated list for multiple observed variables", default="0.1")
-    parser.add_argument("-o", "--optimize", help="column index from which the optimum is always selected, can only be used in combination with -r")
     return parser
 
 
@@ -30,8 +29,13 @@ def parseArgs():
         try:
             ranges = args.ranges.split(",")
             for rangeI in range(0,len(ranges)):
-                ranges[rangeI]=[float(i) for i in ranges[rangeI].split(":")]
-                if len(ranges[rangeI]) > 3:
+                rangeTokens = ranges[rangeI].split(":")
+                if (len(rangeTokens) == 4):
+                    ranges[rangeI] = [float(rangeTokens[0]), float(rangeTokens[1]),
+                            float(rangeTokens[2]), rangeTokens[3]]
+                else:
+                    ranges[rangeI]=[float(i) for i in ranges[rangeI].split(":")[:-1]]
+                if len(ranges[rangeI]) > 4:
                     raise Exception("")
         except:
             raise Exception("Invalid format for ranges")
@@ -43,42 +47,43 @@ def parseArgs():
     else:
         numIndep = args.num_indep
 
-    optimColumns = [-1,-1]
-    if args.optimize:
-        if not ranges:
-            raise Exception("--optimize must be used in combination with --ranges")
-        else:
-            optimColumns = [int(i) for i in args.optimize.split(",")]
-            if (not len(optimColumns) == 2):
-                raise Exception("--optimize requires argument in form INDEPC,OBSERVC")
-
     sigma = [float(s) for s in args.sigma.split(",")]
     alpha = [float(a) for a in args.alpha.split(",")]
-    return (args.file, numIndep, ranges, rangeFile, sigma, alpha, optimColumns)
+    return (args.file, numIndep, ranges, rangeFile, sigma, alpha)
+
+
+def flattenMeshGrid(linSpaces):
+    meshGrid = np.meshgrid(tuple(linSpaces))
+    # Now concat these horizontally
+    numPoints = meshGrid[0].size
+    x = np.zeros((numPoints, len(meshGrid)))
+    for i in range(0,len(meshGrid)):
+        x[:,i] = np.reshape(meshGrid[i], (numPoints))
+    return x
 
 
 def getPredVarsFromRanges(ranges):
     defaultNum = 50
     linSpaces = []
+    indexSpaces = []
     numIndep = len(ranges)
     for r in ranges:
-        if len(r) == 3:
+        if len(r) == 3 or len(r) == 4:
             linSpaces.append(np.linspace(r[0],r[1],r[2],endpoint=True)[:])
+            indexSpaces.append([int(i) for i in np.linspace(0,r[2]-1,r[2], endpoint=True)[:]])
         elif len(r) == 2:
             linSpaces.append(np.linspace(r[0],r[1],defaultNum, endpoint=True)[:])
+            indexSpaces.append(np.array([int(i) for i in np.linspace(0,defaultNum-1,defaultNum, endpoint=True)[:]]))
         elif (len(r) == 1):
             linSpaces.append(np.array([r[0]]))
+            indexSpace.append(np.array([0]))
         else:
             raise Exception("Error in ranges: "+str(r))
 
-    meshGrid = np.meshgrid(tuple(linSpaces))
-    # Now concat these horizontally
-    numPoints = meshGrid[0].size
-    predVars = np.zeros((numPoints, len(meshGrid)))
-    for i in range(0,len(meshGrid)):
-        predVars[:,i] = np.reshape(meshGrid[i], (numPoints))
+    predVars = flattenMeshGrid(linSpaces)
+    ndIndexing = flattenMeshGrid(indexSpaces)
 
-    return predVars
+    return (predVars, linSpaces, ndIndexing)
 
 
 def getPredVarsFromFile(numIndep , rangeFile):
@@ -91,13 +96,15 @@ def getPredVarsFromFile(numIndep , rangeFile):
 
 def getPredVars(numIndep, ranges, rangeFile):
     if ranges:
-        predVars = getPredVarsFromRanges(ranges)
+        (predVars, linSpaces, ndIndexing) = getPredVarsFromRanges(ranges)
     else:
         predVars = getPredVarsFromFile(numIndep, rangeFile)
+        linSpaces = None
+        ndIndexing = None
 
     if len(predVars.shape)==1:
         predVars = np.reshape(predVars, (predVars.shape[0], 1))
-    return predVars
+    return (predVars, linSpaces, ndIndexing)
         
         
 def calcOptimalScaling(x):
@@ -125,14 +132,27 @@ def calcTypicalJumps(x):
     return jumps
 
 
+def calcOptimalOffsets(x):
+    n = x.shape[1]
+    offsets = np.zeros(n)
+    for i in range(0,n):
+        offsets[i] = np.average(x[:,i])
+    return offsets
+
+
 def predict(x, y, xf, sigma, alpha):
+    ## not needed, but kep for flexibility
     #scaling = calcOptimalScaling(x)
+    #offsets = calcOptimalOffsets(x) 
+
     jumps = calcTypicalJumps(x)
     scaling = 0.1/jumps
+
     kernel = mlpy.KernelGaussian(sigma)
     krr = mlpy.KernelRidgeRegression(kernel, alpha)
-    krr.learn(x*scaling, y)
-    yf = krr.pred(xf*scaling)
+    scaleY = 1.0/np.amax(y)
+    krr.learn(x*scaling, y*scaleY)
+    yf = krr.pred(xf*scaling)/scaleY
     return yf
 
 
@@ -163,70 +183,86 @@ def predictObserved(fname, predVars, sigma, alpha):
     return predOut
 
 
-def getSortableFieldArray(x, numIndep, indepColumn):
-    nR = x.shape[0]
-    nC = x.shape[1]
+def parseOptimizationToken(string):
+    tokens = string.split('(')
+    tokens = [tokens[0]]+tokens[1].split(')')
 
-    dtype=[]
-    dtypeSort=[]
-    for i in range(0,nC):
-        name=str(i)
-        dtype.append((name, float))
-
-        if i < numIndep-1 and (not i==indepColumn):
-            dtypeSort.append(name)
-
-    values = []
-    for i in range(0, nR):
-        l = x[i,:].tolist()
-        values.append(tuple(l))
-    a = np.array(values, dtype = dtype)
-    return (a, dtypeSort)
+    mode = tokens[0]
+    colI = int(tokens[1])
+    return (mode, colI)
 
 
-def extractStructuredArray(x):
-    l = x.tolist()
-    nR = len(l)
-    nC = len(list(l[0]))
+def optimizePredVars(allData, numIndep, ranges, linSpaces, ndIndexing):
+    doOptimization = False
+    for r in ranges:
+        if (len(r)==4):
+            doOptimization = True
+    if not doOptimization:
+        return allData
 
-    a = np.zeros((nR, nC))
+    ## put data into matrix form
+    # first get the shape of this matrix
+    numAll = allData.shape[1]
+    numObser = numAll - numIndep
+    numPoints = allData.shape[0]
 
-    for i in range(0,nR):
-        a[i,:] = np.array(list(l[i]))[:]
+    sizes = []
+    for i in range(0,numIndep):
+        sizes.append(int(np.amax(ndIndexing[:,i])))
 
-    return a
+    data = []
+    for j in range(0,numAll):
+        # create an empty matrix
+        matrix = np.zeros(tuple(sizes))
 
+        # loop the data, putting the predOut vars in there
+        for i in range(0, numPoints):
+            matrix[ndIndexing[i,:]] = allData[i,j]
+        data.append(matrix)
 
-def optimize(dataOut, numIndep, optimColumns):
-    indepColumn = optimColumns[0] 
-    obserColumn = optimColumns[1]
+    ## maximize along certain axes, do this by looping the ranges
+    for i in range(0,numIndep):
+        r = ranges[i]
+        if (len(r) == 4):
+            if (r[3] > numIndep-1):
+                (mode, colI) = parseOptmizationToken(r[3])
+                optimI = colI - numIndep
+                if (mode == 'max'):
+                    optimIDS = np.argmax(data[optimI], axis=i)
+                    data[optimI] = np.amax(data[optimI], axis=i)
+                elif (mode == 'min'):
+                    optimIDS = np.argmin(data[optimI], axis=i)
+                    data[optimI] = np.amin(data[optimI], axis=i)
+                else:
+                    raise Exception("Mode \""+str(mode)+"\" not recognized")
+                # Loop the other data in order to do the same reduction
+                for j in range(0,numAll):
+                    if (not j == int(r[3])):
+                        data[j] = data[j][optimIDS]
 
-    (x, dtypeSort) = getSortableFieldArray(dataOut, numIndep, indepColumn)
-    xs_ = np.sort(x, order=dtypeSort)
-    xs = extractStructuredArray(xs_)
-
-    # Now loop the array looking for the optimal condition
+            else:
+                raise Exception("Invalid column indexing for optimizing utility")
     
-
-    # First step is to sort over all the columns except the 
-    return dataOut
+    ## Convert the matrix back to the flattened form
+    allData = data[0].reshape((data[0].size))
+    for i in range(1,numAll):
+        allData = np.c_[allData, data[i].reshape((data[1].size))]
+    return allData
 
 
 #TODO: automatic determination of good and robust values for sigma and alpha
-#TODO: normalization of indepVar input data so that single sigma and alpha are optimal over whole input space
-#TODO: choose between maximize and minimize
 def main():
-    (fname, numIndep, ranges, rangeFile, sigma, alpha, optimColumns) = parseArgs()
+    (fname, numIndep, ranges, rangeFile, sigma, alpha) = parseArgs()
 
-    predVars = getPredVars(numIndep, ranges, rangeFile)
+    (predVars, linSpaces, ndIndexing) = getPredVars(numIndep, ranges, rangeFile)
 
     predOut = predictObserved(fname, predVars, sigma, alpha)
 
-    # Print the result 
-    dataOut = np.c_[predVars, predOut]
+    (predVars, predOut) = optimizePredVars(predVars, predOut, ranges, linSpaces, ndIndexing)
 
-    if (optimColumns[0] >= 0):
-        dataOut = optimize(dataOut, numIndep, optimColumns)
+    dataOut = np.c_[predVars, predOut]
+    dataOut = optimizePredVars(dataOut, numIndep, ranges, linSpaces, ndIndexing)
+
     np.savetxt(sys.stdout, dataOut, fmt='%g')
     return
 
