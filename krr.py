@@ -1,8 +1,10 @@
 #!/usr/bin/env python
+from __future__ import print_function
 import argparse
 import numpy as np
 import mlpy
 import sys
+
 
 
 def getParser():    
@@ -60,7 +62,6 @@ def getPredVarsFromRanges(ranges):
             raise Exception("Error in ranges: "+str(r))
 
     meshGrid = np.meshgrid(*linSpaces)
-    print(meshGrid)
     # Now concat these horizontally
     numPoints = meshGrid[0].size
     predVars = np.zeros((numPoints, len(meshGrid)))
@@ -89,11 +90,20 @@ def getPredVars(numIndep, ranges, rangeFile):
     return predVars
         
         
+def calcOptimalScaling(x):
+    n = x.shape[1]
+    scaling = np.zeros(n)
+    for i in range(0,x.shape[1]):
+        scaling[i] = 1.0/np.amax(x[:,i])
+    return scaling
+
+
 def predict(x, y, xf, sigma, alpha):
+    scaling = calcOptimalScaling(x)
     kernel = mlpy.KernelGaussian(sigma)
     krr = mlpy.KernelRidgeRegression(kernel, alpha)
-    krr.learn(x, y)
-    yf = krr.pred(xf)
+    krr.learn(x*scaling, y)
+    yf = krr.pred(xf*scaling)
     return yf
 
 
