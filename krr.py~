@@ -13,8 +13,8 @@ def getParser():
     parser.add_argument("-n", "--num-indep", type=int, default=0, help="number of independent variables")
     parser.add_argument("-r", "--ranges", help="comma separated list of ranges, eg: a0:a1:Na:max(2),b0:b1,c,d,e. Overrides indep variables from FILE or RANGE-FILE")
     parser.add_argument("-f", "--range-file", help="overrides the indep variables in FILE")
-    parser.add_argument("-s", "--sigma", help="gaussian kernel deviation, default=1.0, can be comma separated list for multiple observed variables", default="1.0")
-    parser.add_argument("-a", "--alpha", help="penalization parameter, default=0.1, can be comma separated list for multiple observed variables", default="0.1")
+    parser.add_argument("-s", "--sigma", help="gaussian kernel deviation, default=0.5, can be comma separated list for multiple observed variables", default="0.5")
+    parser.add_argument("-a", "--alpha", help="penalization parameter, default=0.0002, can be comma separated list for multiple observed variables", default="0.0002")
     return parser
 
 
@@ -261,7 +261,8 @@ def main():
     (predVars, predOut) = optimizePredVars(predVars, predOut, ranges, linSpaces, ndIndexing)
 
     dataOut = np.c_[predVars, predOut]
-    dataOut = optimizePredVars(dataOut, numIndep, ranges, linSpaces, ndIndexing)
+    if (ranges):
+        dataOut = optimizePredVars(dataOut, numIndep, ranges, linSpaces, ndIndexing)
 
     np.savetxt(sys.stdout, dataOut, fmt='%g')
     return
